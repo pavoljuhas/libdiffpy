@@ -77,8 +77,11 @@ class BVSCalculator : public PairQuantity
         double mvalenceprecision;
         // cache
         struct {
+            // TODO unused baresymbols, consider removing in libdiffpy-2.0.
             std::vector<std::string> baresymbols;
             std::vector<int> valences;
+            std::vector<int> typeofsite;
+            std::vector<BVParam> bpused;
         } mstructure_cache;
 
         // serialization
@@ -91,6 +94,10 @@ class BVSCalculator : public PairQuantity
             ar & mvalenceprecision;
             ar & mstructure_cache.baresymbols;
             ar & mstructure_cache.valences;
+            if (version >= 1) {
+                ar & mstructure_cache.typeofsite;
+                ar & mstructure_cache.bpused;
+            }
         }
 
 };  // class BVSCalculator
@@ -100,6 +107,7 @@ class BVSCalculator : public PairQuantity
 
 // Serialization -------------------------------------------------------------
 
+BOOST_CLASS_VERSION(diffpy::srreal::BVSCalculator, 1)
 BOOST_CLASS_EXPORT_KEY(diffpy::srreal::BVSCalculator)
 
 #endif  // BVSCALCULATOR_HPP_INCLUDED

@@ -30,6 +30,20 @@ using namespace diffpy::validators;
 namespace diffpy {
 namespace srreal {
 
+// Local Helpers -------------------------------------------------------------
+
+namespace {
+
+int flattrilindex(int i, int j)
+{
+    // use lower-tringular part of a symmetric matrix where j <= i.
+    if (i < j)  swap(i, j);
+    int k = (i * (i + 1)) / 2 + j;
+    return k;
+}
+
+}   // namespace
+
 // Constructor ---------------------------------------------------------------
 
 BVSCalculator::BVSCalculator()
@@ -162,15 +176,16 @@ void BVSCalculator::configureBondGenerator(BaseBondGenerator& bnds) const
 void BVSCalculator::addPairContribution(const BaseBondGenerator& bnds,
         int summationscale)
 {
-    const string& a0 = mstructure_cache.baresymbols[bnds.site0()];
-    const string& a1 = mstructure_cache.baresymbols[bnds.site1()];
+    const int tp0 = mstructure_cache.typeofsite[bnds.site0()];
+    const int tp1 = mstructure_cache.typeofsite[bnds.site1()];
+    const int k = flattrilindex(tp0, tp1);
+    assert(0 <= k && k < int(mstructure_cache.bpused.size()));
+    const BVParam& bp = mstructure_cache.bpused[k];
     int v0 = mstructure_cache.valences[bnds.site0()];
     int v1 = mstructure_cache.valences[bnds.site1()];
-    const BVParametersTable& bvtb = *(this->getBVParamTable());
-    const BVParam& bp = bvtb.lookup(a0, v0, a1, v1);
-    // do nothing if there are no bond parameters for this pair
-    if (&bp == &bvtb.none())    return;
     double valencehalf = bp.bondvalence(bnds.distance()) / 2.0;
+    // do nothing if there are no bond parameters for this pair
+    if (0 == valencehalf)    return;
     int pm0 = (v0 >= 0) ? 1 : -1;
     int pm1 = (v1 >= 0) ? 1 : -1;
     const double& o0 = mstructure->siteOccupancy(bnds.site0());
@@ -183,15 +198,34 @@ void BVSCalculator::addPairContribution(const BaseBondGenerator& bnds,
 
 void BVSCalculator::cacheStructureData()
 {
+    typedef boost::unordered_map<string,int> TypeToIndexMap;
     int cntsites = this->countSites();
-    mstructure_cache.baresymbols.resize(cntsites);
-    mstructure_cache.valences.resize(cntsites);
     const BVParametersTable& bvtb = *(this->getBVParamTable());
-    for (int i = 0; i < cntsites; ++i)
+    // index the unique atom types occuring in the structure
+    mstructure_cache.valences.resize(cntsites);
+    mstructure_cache.typeofsite.resize(cntsites);
+    TypeToIndexMap atomtypeidx;
+    for (int siteidx = 0; siteidx < cntsites; ++siteidx)
     {
-        const string& smbl = mstructure->siteAtomType(i);
-        mstructure_cache.baresymbols[i] = atomBareSymbol(smbl);
-        mstructure_cache.valences[i] = bvtb.getAtomValence(smbl);
+        const string& smbl = mstructure->siteAtomType(siteidx);
+        mstructure_cache.valences[siteidx] = bvtb.getAtomValence(smbl);
+        TypeToIndexMap::iterator tpii;
+        tpii = atomtypeidx.emplace(smbl, int(atomtypeidx.size())).first;
+        mstructure_cache.typeofsite[siteidx] = tpii->second;
+    }
+    // build a flattened half-diagonal matrix of types vs bond parameters
+    const int ntps = atomtypeidx.size();
+    const int nbvpars = (ntps * (ntps + 1)) / 2;
+    mstructure_cache.bpused.assign(nbvpars, BVParametersTable::none());
+    TypeToIndexMap::const_iterator tpii, tpjj;
+    for (tpii = atomtypeidx.begin(); tpii != atomtypeidx.end(); ++tpii)
+    {
+        for (tpjj = tpii; tpjj != atomtypeidx.end(); ++tpjj)
+        {
+            int k = flattrilindex(tpii->second, tpjj->second);
+            assert(0 <= k && k < int(mstructure_cache.bpused.size()));
+            mstructure_cache.bpused[k] = bvtb.lookup(tpii->first, tpjj->first);
+        }
     }
 }
 
@@ -199,31 +233,14 @@ void BVSCalculator::cacheStructureData()
 double BVSCalculator::rmaxFromPrecision(double eps) const
 {
     const BVParametersTable& bvtb = *(this->getBVParamTable());
-    // build a set of unique (symbol, valence) pairs
-    typedef boost::unordered_set< pair<string, int> > SymbolValenceSet;
-    SymbolValenceSet allsymvals;
-    for (int i = 0; i < this->countSites(); ++i)
-    {
-        allsymvals.insert(make_pair(mstructure_cache.baresymbols[i],
-                    mstructure_cache.valences[i]));
-    }
-    // find all used bond parameters
-    BVParametersTable::SetOfBVParam bpused;
-    SymbolValenceSet::const_iterator sv0, sv1;
-    for (sv0 = allsymvals.begin(); sv0 != allsymvals.end(); ++sv0)
-    {
-        for (sv1 = sv0; sv1 != allsymvals.end(); ++sv1)
-        {
-            const BVParam& bp = bvtb.lookup(
-                    sv0->first, sv0->second, sv1->first, sv1->second);
-            bpused.insert(bp);
-        }
-    }
+    vector<BVParam>::const_iterator bpit = mstructure_cache.bpused.begin();
     double rv = 0.0;
-    BVParametersTable::SetOfBVParam::iterator bpit;
-    for (bpit = bpused.begin(); bpit != bpused.end(); ++bpit)
+    for (; bpit != mstructure_cache.bpused.end(); ++bpit)
     {
-        rv = max(rv, bpit->bondvalenceToDistance(eps));
+        // lookup parameters here again in case BVParametersTable changed
+        // after building the cache of bpused.
+        const BVParam& bp = bvtb.lookup(*bpit);
+        rv = max(rv, bp.bondvalenceToDistance(eps));
     }
     return rv;
 }
