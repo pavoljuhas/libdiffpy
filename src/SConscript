@@ -9,7 +9,7 @@ flagnames = 'CFLAGS CXXFLAGS LDFLAGS'.split()
 env.MergeFlags([os.environ.get(n, '') for n in flagnames])
 
 # The directory of this SConscript should be searched first for any headers.
-env.PrependUnique(CPPPATH=Dir('.'))
+env.PrependUnique(CPPPATH=[Dir('.')])
 
 # Insert LIBRARY_PATH explicitly because some compilers
 # ignore it in the system environment.
@@ -23,20 +23,6 @@ if env['tool'] == 'intelc':
         print("Cannot find the Intel C/C++ compiler 'icpc'.")
         Exit(1)
     env.Tool('intelc', topdir=icpc[:icpc.rfind('/bin')])
-
-# Declare external libraries.
-env.ParseConfig("gsl-config --cflags")
-egsl = DefaultEnvironment().Clone()
-egsl.ParseConfig("gsl-config --libs")
-gslnames = [egsl.subst('${LIBPREFIX}${SOURCE}${LIBSUFFIX}', source=f)
-            for f in egsl['LIBS'] if 'gsl' in f]
-gslstaticlibs = [FindFile(f, egsl['LIBPATH']) for f in gslnames]
-gslshareddeps = [f for f in egsl['LIBS'] if not 'gsl' in f]
-assert all(gslstaticlibs)
-
-env.AppendUnique(LIBS=gslshareddeps)
-# dladdr in runtimepath.cpp requires the dl library.
-env.AppendUnique(LIBS=['dl'])
 
 fast_linkflags = ['-s']
 
@@ -120,8 +106,22 @@ if 'sdist' in COMMAND_LINE_TARGETS:
 
 # lib -- shared library object
 env_lib = env.Clone()
-env_lib.AppendUnique(LIBS=gslstaticlibs)
-env_lib.AppendUnique(LIBPATH=egsl.get('LIBPATH', []))
+
+# Add extra libraries needed for the lib target
+
+# dladdr in runtimepath.cpp requires the dl library.
+env_lib.AppendUnique(LIBS=['dl'])
+
+# Add GSL libraries with static linkage.
+env_lib.ParseConfig("gsl-config --cflags --libs")
+env_lib.Replace(LIBS=[
+    (f if not 'gsl' in f else
+     FindFile(env_lib.subst('${LIBPREFIX}${SOURCE}${LIBSUFFIX}', source=f),
+              env_lib['LIBPATH']))
+    for f in env_lib['LIBS']
+])
+assert all(env_lib['LIBS'])
+
 libdiffpy = env_lib.SharedLibrary('diffpy', env['lib_sources'])
 Export('libdiffpy')
 lib = Alias('lib', [libdiffpy, env['lib_includes']])
