@@ -35,7 +35,6 @@ gslshareddeps = [f for f in egsl['LIBS'] if not 'gsl' in f]
 assert all(gslstaticlibs)
 
 env.AppendUnique(LIBS=gslshareddeps)
-env.AppendUnique(LIBPATH=egsl.get('LIBPATH', []))
 # dladdr in runtimepath.cpp requires the dl library.
 env.AppendUnique(LIBS=['dl'])
 
@@ -122,6 +121,7 @@ if 'sdist' in COMMAND_LINE_TARGETS:
 # lib -- shared library object
 env_lib = env.Clone()
 env_lib.AppendUnique(LIBS=gslstaticlibs)
+env_lib.AppendUnique(LIBPATH=egsl.get('LIBPATH', []))
 libdiffpy = env_lib.SharedLibrary('diffpy', env['lib_sources'])
 Export('libdiffpy')
 lib = Alias('lib', [libdiffpy, env['lib_includes']])
